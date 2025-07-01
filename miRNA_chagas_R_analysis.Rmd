@@ -3,3 +3,832 @@ title: "miRNA_chagas_R_analysis"
 output: html_document
 ---
 
+---
+    title: "miRNA analysis"
+author: "Eric Roma"
+date: "2024-08-26"
+output: pdf_document
+editor_options: 
+    chunk_output_type: console
+---
+    
+    ```{r}
+install.packages("xfun")
+```
+
+
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("edgeR")
+BiocManager::install("DESeq2")
+
+
+install.packages("pheatmap")
+
+```
+
+
+```{r}
+# Definir a pasta de trabalho
+setwd("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/" )
+print(getwd())
+```
+
+
+```{r}
+# Carregar as bibliotecas necessárias
+library(tidyverse)
+library(readxl)
+library(Biobase)
+library(DESeq2)
+library(dplyr)
+library(ggplot2)
+library(edgeR)
+library(pheatmap)
+```
+
+
+```{r}
+# Importar os dados de contagem
+counts <- read_excel("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/miRNA_counts_R_studio.xlsx")
+metadata <- read_excel("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/metada_miRNA.xlsx")
+
+counts <- as.data.frame(counts)
+metadata <- as.data.frame(metadata)
+
+# Defina a primeira coluna como nomes das linhas da metadata
+rownames(metadata) <- metadata$Samples
+
+# Remova a primeira coluna do data frame metadata
+metadata <- metadata[, -1]
+
+# Defina a primeira coluna como nomes das linhas de counts
+rownames(counts) <- counts$Name
+
+# Remova a primeira coluna do data frame counts
+counts <- counts[, -1]
+
+# Remova a primeira coluna do data frame counts sem acession
+counts_sem_acession <- counts[, -1]
+```
+
+
+```{r}
+# Organizando os dados para rodar o DESeq2
+# A nomeação das amostras na tabela de counts deve estar divida nas colunas, enquanto a nomeação das amostras deve estar nas linhas.
+# Importante: o número de colunas (variables) da tabela de contagem precisa ser o mesmo do número de linhas (obs.) da tabela de metadata, e na mesma ordem.
+# Conferir se estão na mesma ordem
+colnames(counts_sem_acession)
+rownames(metadata)
+all(colnames(counts_sem_acession) == rownames(metadata))
+
+# Se o comando all der false, seguir o código abaixo, se der true, está ok
+match(colnames(counts_sem_acession), rownames(metadata))
+idx_counts <- match(colnames(counts_sem_acession), rownames(metadata))
+reordered_metadata <- metadata[idx_counts, ]
+view(reordered_metadata)
+all(colnames(counts_sem_acession) == rownames(reordered_metadata))
+```
+
+```{r}
+# Carregar pacotes necessários
+library(DESeq2)
+
+# Criar o objeto DESeq2 para análise da expressão diferencial Case x Control
+dds_CTvsChagas <- DESeqDataSetFromMatrix(countData = counts_sem_acession,
+                                         colData = reordered_metadata,
+                                         design = ~ Case_x_Control + Sex + Age)
+
+# Fazer a normalização (TMM)
+dds_CTvsChagas <- DESeq(dds_CTvsChagas)
+
+# Execute o teste de diferenciação de expressão para a condição "CTvsChagas"
+res_CTvsChagas <- results(dds_CTvsChagas, contrast = c("Case_x_Control", "Chagas", "HC"))
+
+# Verifique os resultados
+head(res_CTvsChagas)
+summary(res_CTvsChagas)
+
+# Formatar os resultados para evitar notação científica
+res_CTvsChagas_df <- as.data.frame(res_CTvsChagas)
+res_CTvsChagas_df[] <- lapply(res_CTvsChagas_df, function(x) if(is.numeric(x)) format(x, scientific = FALSE) else x)
+
+# Salvar a lista de análise de expressão diferencial em uma tabela CSV
+write.csv(res_CTvsChagas_df, file = "~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/DE/Case_x_Control.csv", row.names = TRUE, quote = FALSE)
+
+```
+
+```{r}
+# Supondo que seu objeto DESeq2 seja chamado dds
+normalized_counts_dds <- counts(dds_CTvsChagas, normalized = TRUE)
+
+# Transformar para um data frame se desejar
+normalized_counts_dds_df <- as.data.frame(normalized_counts_dds)
+
+# Visualizar os dados normalizados
+print(normalized_counts_dds_df)
+
+write.csv(normalized_counts_dds_df, file = "~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/Counts_Case_x_Control.csv", row.names = TRUE, quote = FALSE)
+
+```
+
+
+
+```{r}
+# Carregar pacotes necessários
+library(DESeq2)
+
+# Criando o objeto DESeq2 para análise da expressão diferencial CCC x IND x HC
+dds_CCCvsINDvsHC <- DESeqDataSetFromMatrix(countData = counts_sem_acession,
+                                           colData = reordered_metadata,
+                                           design = ~ CCC_IND_HC + Sex + Age)
+
+# Fazer a normalização (TMM)
+dds_CCCvsINDvsHC <- DESeq(dds_CCCvsINDvsHC)
+
+# Realize todas as comparações de pares entre os grupos CCC x IND x HC
+res_pairwise_CCCvsINDvsHC <- list()
+
+# Criar uma matriz de grupos para comparação
+grupos_para_comparacao_CCCvsINDvsHC <- matrix(c("IND", "CCC", "CCC",
+                                                "HC", "HC", "IND"), nrow = 2, byrow = TRUE)
+
+for (i_CCCvsINDvsHC in 1:ncol(grupos_para_comparacao_CCCvsINDvsHC)) {
+    # Extrair os grupos para a comparação atual
+    grupos_atual_CCCvsINDvsHC <- grupos_para_comparacao_CCCvsINDvsHC[, i_CCCvsINDvsHC]
+    
+    # Definir o contraste
+    contrast_CCCvsINDvsHC <- c("CCC_IND_HC", grupos_atual_CCCvsINDvsHC[1], grupos_atual_CCCvsINDvsHC[2])
+    
+    # Executar a análise DESeq2
+    res_pairwise_CCCvsINDvsHC[[i_CCCvsINDvsHC]] <- results(dds_CCCvsINDvsHC, contrast = contrast_CCCvsINDvsHC)
+    
+    # Modificar o nome do arquivo de saída
+    file_name <- paste0("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/DE/resultados_deseq2_CCCvsINDvsHC_", 
+                        grupos_atual_CCCvsINDvsHC[1], "_vs_", grupos_atual_CCCvsINDvsHC[2], ".csv")
+    
+    # Converter resultados para data frame e formatar números
+    res_df <- as.data.frame(res_pairwise_CCCvsINDvsHC[[i_CCCvsINDvsHC]])
+    res_df[] <- lapply(res_df, function(x) if(is.numeric(x)) format(x, scientific = FALSE) else x)
+    
+    # Salvar os resultados de cada comparação em um arquivo separado
+    write.csv(res_df, file = file_name, row.names = TRUE, quote = FALSE)
+}
+
+# Combine todos os resultados em um único dataframe
+res_combined_CCCvsINDvsHC <- do.call(rbind, res_pairwise_CCCvsINDvsHC)
+
+# Ajuste os valores-p para controle de comparações múltiplas usando o método de Bonferroni
+res_combined_CCCvsINDvsHC$padj <- p.adjust(res_combined_CCCvsINDvsHC$padj, method = "bonferroni")
+
+# Converter resultados combinados para data frame e formatar números
+res_combined_CCCvsINDvsHC_df <- as.data.frame(res_combined_CCCvsINDvsHC)
+res_combined_CCCvsINDvsHC_df[] <- lapply(res_combined_CCCvsINDvsHC_df, function(x) if(is.numeric(x)) format(x, scientific = FALSE) else x)
+
+# Salvar a tabela combinada em um arquivo CSV
+write.csv(res_combined_CCCvsINDvsHC_df, file = "~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/DE/combined_results_CCCvsINDvsHC.csv", row.names = TRUE, quote = FALSE)
+
+# Visualize os resultados combinados
+print(res_combined_CCCvsINDvsHC_df)
+
+# Verifique os resultados
+summary(res_combined_CCCvsINDvsHC_df)
+
+```
+
+
+```{r}
+# Carregar pacotes necessários
+library(DESeq2)
+
+# Criando o objeto DESeq2 para análise da expressão diferencial entre CCC
+dds_CCC <- DESeqDataSetFromMatrix(countData = counts_sem_acession,
+                                  colData = reordered_metadata,
+                                  design = ~ Groups + Sex + Age)
+
+# Fazer a normalização (TMM)
+dds_CCC <- DESeq(dds_CCC)
+
+# Realize todas as comparações de pares entre os grupos
+res_pairwise_CCC <- list()
+
+# Criar uma matriz de grupos para comparação
+grupos_para_comparacao_CCC <- matrix(c("IND", "A", "B", "CD", "A", "B", "CD", "B", "CD", "CD",
+                                       "HC", "HC", "HC", "HC", "IND", "IND", "IND", "A", "A", "B"), nrow = 2, byrow = TRUE)
+
+for (i_CCC in 1:ncol(grupos_para_comparacao_CCC)) {
+    # Extrair os grupos para a comparação atual
+    grupos_atual_CCC <- grupos_para_comparacao_CCC[, i_CCC]
+    
+    # Definir o contraste
+    contrast_CCC <- c("Groups", grupos_atual_CCC[1], grupos_atual_CCC[2])
+    
+    # Executar a análise DESeq2
+    res_pairwise_CCC[[i_CCC]] <- results(dds_CCC, contrast = contrast_CCC)
+    
+    # Modificar o nome do arquivo de saída
+    file_name <- paste0("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/DE/resultados_deseq2_CCC_", 
+                        grupos_atual_CCC[1], "_vs_", grupos_atual_CCC[2], ".csv")
+    
+    # Converter resultados para data frame e formatar números
+    res_df <- as.data.frame(res_pairwise_CCC[[i_CCC]])
+    res_df[] <- lapply(res_df, function(x) if(is.numeric(x)) format(x, scientific = FALSE) else x)
+    
+    # Salvar os resultados de cada comparação em um arquivo separado
+    write.csv(res_df, file = file_name, row.names = TRUE, quote = FALSE)
+}
+
+# Combine todos os resultados em um único dataframe
+res_combined_CCC <- do.call(rbind, res_pairwise_CCC)
+
+# Ajuste os valores-p para controle de comparações múltiplas usando o método de Bonferroni
+res_combined_CCC$padj <- p.adjust(res_combined_CCC$padj, method = "bonferroni")
+
+# Converter resultados combinados para data frame e formatar números
+res_combined_CCC_df <- as.data.frame(res_combined_CCC)
+res_combined_CCC_df[] <- lapply(res_combined_CCC_df, function(x) if(is.numeric(x)) format(x, scientific = FALSE) else x)
+
+# Salvar a tabela combinada em um arquivo CSV
+write.csv(res_combined_CCC_df, file = "~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/DE/combined_results_CCC.csv", row.names = TRUE, quote = FALSE)
+
+# Visualize os resultados combinados
+print(res_combined_CCC_df)
+
+# Verifique os resultados
+summary(res_combined_CCC_df)
+```
+
+```{r}
+# Criando volcano plots para as comparações, HCvsChagas
+
+# Carregar pacotes necessários
+library(ggplot2)
+library(ggrepel)
+
+# Defina um limiar de significância para o valor de p ajustado (padj)
+limiar_padj <- 0.05
+
+# Defina um limiar de fold change
+limiar_fc <- 1.5
+
+# Identifique os pontos significativos e crie uma coluna com seus nomes
+res_CTvsChagas$label <- ifelse(abs(res_CTvsChagas$log2FoldChange) > limiar_fc & res_CTvsChagas$padj < limiar_padj, rownames(res_CTvsChagas), NA)
+
+# Crie o Volcano Plot usando ggplot2
+volcano_plot_CTvsChagas <- ggplot(res_CTvsChagas, aes(x = log2FoldChange, y = -log10(padj))) +
+    geom_point(aes(color = ifelse(abs(log2FoldChange) > limiar_fc & padj < limiar_padj, "Significativo", "Não Significativo")), alpha = 0.6, size = 2) +
+    scale_color_manual(values = c("Significativo" = "red", "Não Significativo" = "black"), guide = FALSE) +
+    geom_hline(yintercept = -log10(limiar_padj), linetype = "dashed", color = "blue") +
+    geom_vline(xintercept = c(-limiar_fc, limiar_fc), linetype = "dashed", color = "blue") +
+    labs(x = "log2 Fold Change", y = "-log10(padj)") +
+    theme_minimal() +
+    geom_text_repel(aes(label = label), size = 3, nudge_x = 0.1, nudge_y = 0.1, max.overlaps = Inf, box.padding = 0.5, point.padding = 0.5)
+
+# Obter o caminho do diretório onde os arquivos da Figura estão sendo salvos
+caminho_diretorio <- dirname("~/Documents/Fiocruz/projetos/miRNA_Chagas/figuras_tabelas_manuscrito/")
+
+# Definir o nome do arquivo da figura
+nome_arquivo_figura <- file.path(caminho_diretorio, "volcano_plot_CTvsChagas.png")
+
+# Salvar o gráfico como uma imagem
+ggsave(nome_arquivo_figura, plot = volcano_plot_CTvsChagas, width = 10, height = 8, dpi = 300)
+
+# Visualize o gráfico
+print(volcano_plot_CTvsChagas)
+
+```
+
+```{r}
+# Volcano plots CCC vs IND vs HC com padj
+# Criar uma lista para armazenar os dataframes de cada comparação
+dataframes_comparacao_CCCvsINDvsHC <- list()
+
+# Definir os nomes das comparações
+nomes_comparacoes_CCCvsINDvsHC <- c("HCvsIND", "HCvsCCC", "INDvsCCC")
+
+# Loop sobre todas as comparações e criar dataframes
+for (i in 1:length(res_pairwise_CCCvsINDvsHC)) {
+    resultados_CCCvsINDvsHC <- res_pairwise_CCCvsINDvsHC[[i]]
+    
+    # Extrair os valores relevantes para o dataframe
+    dataframe_CCCvsINDvsHC <- data.frame(
+        log2FoldChange = resultados_CCCvsINDvsHC$log2FoldChange,
+        padj = resultados_CCCvsINDvsHC$padj
+    )
+    
+    # Adicione o dataframe à lista
+    dataframes_comparacao_CCCvsINDvsHC[[i]] <- dataframe_CCCvsINDvsHC
+    
+    # Defina um limiar de significância para o valor de p ajustado (padj)
+    limiar_padj <- 0.05
+    
+    # Defina um limiar de fold change
+    limiar_fc <- 1.5
+    
+    # Identifique os pontos significativos e crie uma coluna com seus nomes
+    dataframe_CCCvsINDvsHC$label <- ifelse(
+        abs(dataframe_CCCvsINDvsHC$log2FoldChange) > limiar_fc & dataframe_CCCvsINDvsHC$padj < limiar_padj, 
+        rownames(resultados_CCCvsINDvsHC), 
+        NA
+    )
+    
+    # Imprimir a comparação
+    print(paste("Comparação", nomes_comparacoes_CCCvsINDvsHC[i]))
+    
+    # Criar o Volcano Plot
+    volcano_plot_CCCvsINDvsHC <- ggplot(dataframe_CCCvsINDvsHC, aes(x = log2FoldChange, y = -log10(padj))) +
+        geom_point(aes(color = abs(log2FoldChange) > limiar_fc & padj < limiar_padj), alpha = 0.6, size = 2) +
+        scale_color_manual(values = c("TRUE" = "red", "FALSE" = "black"), guide = FALSE) +
+        geom_hline(yintercept = -log10(limiar_padj), linetype = "dashed", color = "blue") +
+        geom_vline(xintercept = c(-limiar_fc, limiar_fc), linetype = "dashed", color = "blue") +
+        labs(x = "log2 Fold Change", y = "-log10(padj)", nomes_comparacoes_CCCvsINDvsHC[i]) +
+        theme_minimal() +
+        geom_text_repel(aes(label = label), size = 3, nudge_x = 0.1, nudge_y = 0.1, max.overlaps = Inf, box.padding = 0.5, point.padding = 0.5)
+    
+    # Salvar o gráfico como uma imagem
+    nome_arquivo <- paste0("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/Volcano_plots/volcano_plot_", nomes_comparacoes_CCCvsINDvsHC[i], ".png")
+    ggsave(nome_arquivo, plot = volcano_plot_CCCvsINDvsHC, width = 8, height = 6, dpi = 300)
+    
+    # Visualize o gráfico
+    print(volcano_plot_CCCvsINDvsHC)
+}
+
+# Imprimir mensagem de conclusão
+print("Todos os gráficos de Volcano Plot foram salvos com sucesso!")
+
+```
+
+```{r}
+# Volcano plots CCC vs IND vs HC somente com pvalue sem ajuste
+# Carregar pacotes necessários
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+
+# Volcano plots CCC vs IND vs HC com pvalue
+# Criar uma lista para armazenar os dataframes de cada comparação
+dataframes_comparacao_CCCvsINDvsHC <- list()
+
+# Definir os nomes das comparações
+nomes_comparacoes_CCCvsINDvsHC <- c("HCvsIND", "HCvsCCC", "INDvsCCC")
+
+# Loop sobre todas as comparações e criar dataframes
+for (i in 1:length(res_pairwise_CCCvsINDvsHC)) {
+    resultados_CCCvsINDvsHC <- res_pairwise_CCCvsINDvsHC[[i]]
+    
+    # Extrair os valores relevantes para o dataframe
+    dataframe_CCCvsINDvsHC <- data.frame(
+        log2FoldChange = resultados_CCCvsINDvsHC$log2FoldChange,
+        pvalue = resultados_CCCvsINDvsHC$pvalue
+    )
+    
+    # Adicione o dataframe à lista
+    dataframes_comparacao_CCCvsINDvsHC[[i]] <- dataframe_CCCvsINDvsHC
+    
+    # Defina um limiar de significância para o valor de p (pvalue)
+    limiar_pvalue <- 0.05
+    
+    # Defina um limiar de fold change
+    limiar_fc <- 1.5
+    
+    # Identifique os pontos significativos e crie uma coluna com seus nomes
+    dataframe_CCCvsINDvsHC$label <- ifelse(
+        abs(dataframe_CCCvsINDvsHC$log2FoldChange) > limiar_fc & dataframe_CCCvsINDvsHC$pvalue < limiar_pvalue, 
+        rownames(resultados_CCCvsINDvsHC), 
+        NA
+    )
+    
+    # Imprimir a comparação
+    print(paste("Comparação", nomes_comparacoes_CCCvsINDvsHC[i]))
+    
+    # Criar o Volcano Plot
+    volcano_plot_CCCvsINDvsHC <- ggplot(dataframe_CCCvsINDvsHC, aes(x = log2FoldChange, y = -log10(pvalue))) +
+        geom_point(aes(color = abs(log2FoldChange) > limiar_fc & pvalue < limiar_pvalue), alpha = 0.6, size = 2) +
+        scale_color_manual(values = c("TRUE" = "red", "FALSE" = "black"), guide = FALSE) +
+        geom_hline(yintercept = -log10(limiar_pvalue), linetype = "dashed", color = "blue") +
+        geom_vline(xintercept = c(-limiar_fc, limiar_fc), linetype = "dashed", color = "blue") +
+        labs(x = "log2 Fold Change", y = "-log10(pvalue)", nomes_comparacoes_CCCvsINDvsHC[i]) +
+        theme_minimal() +
+        geom_text_repel(aes(label = label), size = 3, nudge_x = 0.1, nudge_y = 0.1, max.overlaps = Inf, box.padding = 0.5, point.padding = 0.5)
+    
+    # Salvar o gráfico como uma imagem
+    nome_arquivo <- paste0("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/Volcano_plots/volcano_plot_", nomes_comparacoes_CCCvsINDvsHC[i], ".png")
+    ggsave(nome_arquivo, plot = volcano_plot_CCCvsINDvsHC, width = 8, height = 6, dpi = 300)
+    
+    # Visualize o gráfico
+    print(volcano_plot_CCCvsINDvsHC)
+}
+
+# Imprimir mensagem de conclusão
+print("Todos os gráficos de Volcano Plot foram salvos com sucesso!")
+
+```
+
+
+
+```{r}
+#Volcano plots para as comparações HC vs IND vs A vs B vs CD com padj
+# Criar uma lista para armazenar os dataframes de cada comparação
+dataframes_comparacao_CCC <- list()
+
+# Definir os nomes das comparações
+nomes_comparacoes_CCC <- c("HCvsIND", "HCvsA", "HCvsB1B2", "HCvsCD", "INDvsA", "INDvsB1B2", "INDvsCD", "AvsB1B2", "AvsCD", "B1B2vsCD")
+
+# Loop sobre todas as comparações e criar dataframes
+for (i in 1:length(res_pairwise_CCC)) {
+    resultados_CCC <- res_pairwise_CCC[[i]]
+    
+    # Extrair os valores relevantes para o dataframe
+    dataframe_CCC <- data.frame(
+        log2FoldChange = resultados_CCC$log2FoldChange,
+        padj = resultados_CCC$padj
+    )
+    
+    # Adicione o dataframe à lista
+    dataframes_comparacao_CCC[[i]] <- dataframe_CCC
+    
+    # Defina um limiar de significância para o valor de p ajustado (padj)
+    limiar_padj <- 0.05
+    
+    # Defina um limiar de fold change
+    limiar_fc <- 1.5
+    
+    # Identifique os pontos significativos e crie uma coluna com seus nomes
+    dataframe_CCC$label <- ifelse(
+        abs(dataframe_CCC$log2FoldChange) > limiar_fc & dataframe_CCC$padj < limiar_padj, 
+        rownames(resultados_CCC), 
+        NA
+    )
+    
+    # Imprimir a comparação
+    print(paste("Comparação", nomes_comparacoes_CCC[i]))
+    
+    # Criar o Volcano Plot
+    volcano_plot_CCC <- ggplot(dataframe_CCC, aes(x = log2FoldChange, y = -log10(padj))) +
+        geom_point(aes(color = abs(log2FoldChange) > limiar_fc & padj < limiar_padj), alpha = 0.6, size = 2) +
+        scale_color_manual(values = c("TRUE" = "red", "FALSE" = "black"), name = "", guide = FALSE) + # Omitindo a legenda
+        geom_hline(yintercept = -log10(limiar_padj), linetype = "dashed", color = "blue") +
+        geom_vline(xintercept = c(-limiar_fc, limiar_fc), linetype = "dashed", color = "blue") +
+        labs(x = "log2 Fold Change", y = "-log10(padj)", nomes_comparacoes_CCC[i]) +
+        theme_minimal() +
+        geom_text_repel(aes(label = label), size = 3, nudge_x = 0.1, nudge_y = 0.1, max.overlaps = Inf, box.padding = 0.5, point.padding = 0.5)
+    
+    # Salvar o gráfico como uma imagem
+    nome_arquivo <- paste0("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/Volcano_plots/volcano_plot_", nomes_comparacoes_CCC[i], ".png")
+    ggsave(nome_arquivo, plot = volcano_plot_CCC, width = 8, height = 6, dpi = 300)
+    
+    # Visualize o gráfico
+    print(volcano_plot_CCC)
+}
+
+# Imprimir mensagem de conclusão
+print("Todos os gráficos de Volcano Plot foram salvos com sucesso!")
+```
+
+
+```{r}
+# Carregar pacotes necessários
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+
+# Volcano plots para as comparações HC vs IND vs A vs B vs CD com pvalue
+# Criar uma lista para armazenar os dataframes de cada comparação
+dataframes_comparacao_CCC <- list()
+
+# Definir os nomes das comparações
+nomes_comparacoes_CCC <- c("HCvsIND", "HCvsA", "HCvsB1B2", "HCvsCD", "INDvsA", "INDvsB1B2", "INDvsCD", "AvsB1B2", "AvsCD", "B1B2vsCD")
+
+# Loop sobre todas as comparações e criar dataframes
+for (i in 1:length(res_pairwise_CCC)) {
+    resultados_CCC <- res_pairwise_CCC[[i]]
+    
+    # Extrair os valores relevantes para o dataframe
+    dataframe_CCC <- data.frame(
+        log2FoldChange = resultados_CCC$log2FoldChange,
+        pvalue = resultados_CCC$pvalue
+    )
+    
+    # Adicione o dataframe à lista
+    dataframes_comparacao_CCC[[i]] <- dataframe_CCC
+    
+    # Defina um limiar de significância para o valor de p (pvalue)
+    limiar_pvalue <- 0.05
+    
+    # Defina um limiar de fold change
+    limiar_fc <- 1.5
+    
+    # Identifique os pontos significativos e crie uma coluna com seus nomes
+    dataframe_CCC$label <- ifelse(
+        abs(dataframe_CCC$log2FoldChange) > limiar_fc & dataframe_CCC$pvalue < limiar_pvalue, 
+        rownames(resultados_CCC), 
+        NA
+    )
+    
+    # Imprimir a comparação
+    print(paste("Comparação", nomes_comparacoes_CCC[i]))
+    
+    # Criar o Volcano Plot
+    volcano_plot_CCC <- ggplot(dataframe_CCC, aes(x = log2FoldChange, y = -log10(pvalue))) +
+        geom_point(aes(color = abs(log2FoldChange) > limiar_fc & pvalue < limiar_pvalue), alpha = 0.6, size = 2) +
+        scale_color_manual(values = c("TRUE" = "red", "FALSE" = "black"), name = "", guide = FALSE) + # Omitindo a legenda
+        geom_hline(yintercept = -log10(limiar_pvalue), linetype = "dashed", color = "blue") +
+        geom_vline(xintercept = c(-limiar_fc, limiar_fc), linetype = "dashed", color = "blue") +
+        labs(x = "log2 Fold Change", y = "-log10(pvalue)", nomes_comparacoes_CCC[i]) +
+        theme_minimal() +
+        geom_text_repel(aes(label = label), size = 3, nudge_x = 0.1, nudge_y = 0.1, max.overlaps = Inf, box.padding = 0.5, point.padding = 0.5)
+    
+    # Salvar o gráfico como uma imagem
+    nome_arquivo <- paste0("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/Volcano_plots/volcano_plot_sem_padj_", nomes_comparacoes_CCC[i], ".png")
+    ggsave(nome_arquivo, plot = volcano_plot_CCC, width = 8, height = 6, dpi = 300)
+    
+    # Visualize o gráfico
+    print(volcano_plot_CCC)
+}
+
+# Imprimir mensagem de conclusão
+print("Todos os gráficos de Volcano Plot foram salvos com sucesso!")
+
+```
+
+```{r}
+# Análise de PCA somente com miRNAs com DE
+# Carregar pacotes necessários
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+
+# 1. Filtrar resultados de DESeq2 para manter apenas genes com padj < 0.05
+padj_threshold <- 0.05
+filtered_results <- res_CTvsChagas[!is.na(res_CTvsChagas$padj) & res_CTvsChagas$padj < padj_threshold, ]
+
+# Verificar se há genes filtrados
+if (nrow(filtered_results) == 0) {
+    stop("Nenhum gene passou no filtro de padj < 0.05")
+}
+
+# Obter os nomes dos genes filtrados
+filtered_genes <- rownames(filtered_results)
+
+# 2. Criar o dataframe de contagem normalizada e filtrar com base nos genes selecionados
+normalized_counts_CTvsChagas <- counts(dds_CTvsChagas, normalized=TRUE)
+print(normalized_counts_CTvsChagas)
+
+# Converta a matriz em um data frame
+count_data_CTvsChagas <- as.data.frame(normalized_counts_CTvsChagas)
+
+# Filtrar os dados para manter apenas os genes filtrados com padj < 0.05 e contagens maiores que 1 em pelo menos uma amostra
+count_data_CTvsChagas_filtered <- count_data_CTvsChagas[rownames(count_data_CTvsChagas) %in% filtered_genes, ]
+count_data_CTvsChagas_filtered <- count_data_CTvsChagas_filtered[rowSums(count_data_CTvsChagas_filtered > 1) > 0, ]
+
+# Verifique o tamanho do dataframe filtrado
+print(dim(count_data_CTvsChagas_filtered))
+
+# Suponha que você tenha uma variável de grupo chamada "group" em seu conjunto de metadados
+group_CTvsChagas <- reordered_metadata$Case_x_Control
+
+# Verifique se há amostras correspondentes no metadata
+print(length(group_CTvsChagas))
+print(ncol(count_data_CTvsChagas_filtered))
+
+# Execute uma Análise de Componentes Principais (PCA) usando as contagens normalizadas filtradas
+pca_CTvsChagas <- prcomp(t(count_data_CTvsChagas_filtered), scale. = TRUE)
+
+# Crie um dataframe contendo os resultados do PCA
+pca_data_CTvsChagas <- data.frame(PC1 = pca_CTvsChagas$x[,1], PC2 = pca_CTvsChagas$x[,2], Group = group_CTvsChagas)
+print(pca_data_CTvsChagas)
+
+# Defina manualmente as cores para cada grupo, renomeando "Chagas" para "CD"
+group_colors <- c("HC" = "blue", "Chagas" = "black")
+
+# Criar o gráfico PCA com elipses de confiança coloridas, renomeando "Chagas" para "CD" no gráfico
+pca_plot_CTvsChagas <- ggplot(pca_data_CTvsChagas, aes(x = PC1, y = PC2, color = Group, fill = Group)) +
+    geom_point(size = 3, position = position_jitter(width = 0.1, height = 0.1)) +
+    stat_ellipse(level = 0.95, aes(color = Group, fill = Group), alpha = 0.25, linetype = 1) +
+    scale_fill_manual(values = group_colors, breaks = c("HC", "Chagas"), labels = c("HC", "CD")) +  # Alterar ordem e legendas
+    scale_color_manual(values = group_colors, breaks = c("HC", "Chagas"), labels = c("HC", "CD")) + # Alterar ordem e legendas
+    labs(x = "PC1", y = "PC2", title = "") +
+    theme_classic()
+
+# Exibir o gráfico
+print(pca_plot_CTvsChagas)
+
+# Obter o caminho do diretório onde os arquivos CSV estão sendo salvos
+caminho_diretorio <- dirname("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/PCA/")
+
+# Definir o nome do arquivo da figura
+nome_arquivo_figura <- file.path(caminho_diretorio, "PCA_CTvsChagas_only_miRNA_DE.png")
+
+# Salvar o gráfico como uma imagem
+ggsave(nome_arquivo_figura, plot = pca_plot_CTvsChagas, width = 8, height = 6, dpi = 300)
+
+# Determinando as diferenças estatísticas entre os grupos
+pca_data_CTvsChagas <- data.frame(PC1 = pca_CTvsChagas$x[,1], PC2 = pca_CTvsChagas$x[,2], Group = group_CTvsChagas)
+
+# Execute ANOVA para o primeiro componente principal
+anova_PC1 <- aov(PC1 ~ Group, data = pca_data_CTvsChagas)
+anova_summary_PC1 <- summary(anova_PC1)
+print(anova_summary_PC1)
+
+# Execute ANOVA para o segundo componente principal
+anova_PC2 <- aov(PC2 ~ Group, data = pca_data_CTvsChagas)
+anova_summary_PC2 <- summary(anova_PC2)
+print(anova_summary_PC2)
+
+```
+
+```{r}
+# Criação do dataframe para análises de PCA HC vs IND vs A vs B vs CD somente com miRNAs DE
+
+# 1. Filtrar resultados de DESeq2 para manter apenas genes com padj < 0.05
+padj_threshold <- 0.05
+
+# Remover genes com padj = NA
+filtered_results <- res_CTvsChagas[!is.na(res_CTvsChagas$padj) & res_CTvsChagas$padj < padj_threshold, ]
+
+# Verificar se há genes filtrados
+if (nrow(filtered_results) == 0) {
+    stop("Nenhum gene passou no filtro de padj < 0.05")
+}
+
+# Obter os nomes dos genes filtrados
+filtered_genes <- rownames(filtered_results)
+
+# 2. Criar o dataframe de contagem normalizada e filtrar com base nos genes selecionados
+normalized_counts_CTvsChagas <- counts(dds_CTvsChagas, normalized=TRUE)
+print(normalized_counts_CTvsChagas)
+
+# Converta a matriz em um data frame
+count_data_CTvsChagas <- as.data.frame(normalized_counts_CTvsChagas)
+
+# Filtrar os dados para manter apenas os genes filtrados com padj < 0.05 e contagens maiores que 1 em pelo menos uma amostra
+count_data_CTvsChagas_filtered <- count_data_CTvsChagas[rownames(count_data_CTvsChagas) %in% filtered_genes, ]
+count_data_CTvsChagas_filtered <- count_data_CTvsChagas_filtered[rowSums(count_data_CTvsChagas_filtered > 1) > 0, ]
+
+# Verifique o tamanho do dataframe filtrado
+print(dim(count_data_CTvsChagas_filtered))
+
+# Suponha que você tenha uma variável de grupo chamada "group" em seu conjunto de metadados
+group_CTvsChagas <- reordered_metadata$Groups
+
+# Verifique se há amostras correspondentes no metadata
+print(length(group_CTvsChagas))
+print(ncol(count_data_CTvsChagas_filtered))
+
+# Execute uma Análise de Componentes Principais (PCA) usando as contagens normalizadas filtradas
+pca_CTvsChagas <- prcomp(t(count_data_CTvsChagas_filtered), scale. = TRUE)
+
+# Crie um dataframe contendo os resultados do PCA
+pca_data_CTvsChagas <- data.frame(PC1 = pca_CTvsChagas$x[,1], PC2 = pca_CTvsChagas$x[,2], Group = group_CTvsChagas)
+print(pca_data_CTvsChagas)
+
+# Definir o caminho do diretório para salvar o arquivo CSV
+caminho_diretorio <- dirname("~/Documents/Fiocruz/artigos_pra_escrever/miRNA_Chagas/figuras_tabelas_manuscrito/Supporting_data_values/")
+
+# Definir o nome do arquivo CSV
+nome_arquivo_csv <- file.path(caminho_diretorio, "PCA_CCC_only_miRNA_DE_raw_data.csv")
+
+# Salvar os dados brutos do PCA em CSV
+write.csv(pca_data_CTvsChagas, file = nome_arquivo_csv, row.names = TRUE)
+
+
+# Defina manualmente as cores para cada grupo, renomeando "B" e "CD" no gráfico
+group_colors <- c("HC" = "blue", "IND" = "green", "A" = "yellow", "B" = "orange", "CD" = "red")
+
+# Criar o gráfico PCA com elipses de confiança coloridas
+pca_plot_CTvsChagas <- ggplot(pca_data_CTvsChagas, aes(x = PC1, y = PC2, color = Group, fill = Group)) +
+    geom_point(size = 3, position = position_jitter(width = 0.1, height = 0.1)) +
+    stat_ellipse(level = 0.95, aes(color = Group, fill = Group), alpha = 0.25, linetype = 1) +
+    scale_fill_manual(values = group_colors, breaks = c("HC", "IND", "A", "B", "CD"), labels = c("HC", "IND", "A", "B1/B2", "C/D")) +
+    scale_color_manual(values = group_colors, breaks = c("HC", "IND", "A", "B", "CD"), labels = c("HC", "IND", "A", "B1/B2", "C/D")) +
+    labs(x = "PC1", y = "PC2", title = "") +
+    theme_classic()
+
+# Exibir o gráfico
+print(pca_plot_CTvsChagas)
+
+# Obter o caminho do diretório onde os arquivos CSV estão sendo salvos
+caminho_diretorio <- dirname("~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/PCA/")
+
+# Definir o nome do arquivo da figura
+nome_arquivo_figura <- file.path(caminho_diretorio, "PCA_CCC_only_miRNA_DE.png")
+
+# Salvar o gráfico como uma imagem
+ggsave(nome_arquivo_figura, plot = pca_plot_CTvsChagas, width = 8, height = 6, dpi = 300)
+
+# Determinando as diferenças estatísticas entre os grupos
+pca_data_CTvsChagas <- data.frame(PC1 = pca_CTvsChagas$x[,1], PC2 = pca_CTvsChagas$x[,2], Group = group_CTvsChagas)
+
+# Execute ANOVA para o primeiro componente principal
+anova_PC1 <- aov(PC1 ~ Group, data = pca_data_CTvsChagas)
+anova_summary_PC1 <- summary(anova_PC1)
+print(anova_summary_PC1)
+
+# Execute ANOVA para o segundo componente principal
+anova_PC2 <- aov(PC2 ~ Group, data = pca_data_CTvsChagas)
+anova_summary_PC2 <- summary(anova_PC2)
+print(anova_summary_PC2)
+
+```
+
+```{r}
+# Carregar bibliotecas necessárias
+library(RColorBrewer)
+library(pheatmap)
+
+# Criar uma ordem desejada para os grupos
+ordem_grupos <- c("Groups", "HC_IND_CCC", "HC_vs_CD")
+
+# Selecionar as três primeiras colunas
+HC_and_CD_subgroups <- reordered_metadata[, 1:3]
+
+# Ajustar a ordem dos fatores nas colunas de metadata
+HC_and_CD_subgroups$HC_vs_CD <- factor(HC_and_CD_subgroups$Case_x_Control, levels = c("HC", "Chagas"))
+HC_and_CD_subgroups$HC_IND_CCC <- factor(HC_and_CD_subgroups$CCC_IND_HC, levels = c("HC", "IND", "CCC"))
+HC_and_CD_subgroups$Groups <- factor(HC_and_CD_subgroups$Groups, levels = c("HC", "IND", "A", "B", "CD"))
+
+
+# Atualizar níveis do fator "Groups"
+
+levels(HC_and_CD_subgroups$Case_x_Control)[levels(HC_and_CD_subgroups$Case_x_Control) == "HC"] <- "non-ChD"
+
+levels(HC_and_CD_subgroups$Case_x_Control)[levels(HC_and_CD_subgroups$Case_x_Control) == "CD"] <- "ChD"
+
+levels(HC_and_CD_subgroups$Groups)[levels(HC_and_CD_subgroups$Groups) == "B"] <- "B1/B2"
+levels(HC_and_CD_subgroups$Groups)[levels(HC_and_CD_subgroups$Groups) == "CD"] <- "C/D"
+
+# Remover linhas com valores NA da tabela res_CTvsChagas
+res_CTvsChagas_sem_NA <- na.omit(res_CTvsChagas)
+
+# Isolar apenas os resultados de padj
+res_CTvsChagas_padj <- res_CTvsChagas_sem_NA[res_CTvsChagas_sem_NA$padj < 0.05, ]
+
+# Classificar a tabela em ordem decrescente de log2FoldChange
+res_CTvsChagas_padj_log2 <- res_CTvsChagas_padj[order(-res_CTvsChagas_padj$log2FoldChange), ]
+
+# Extrair os rownames da tabela res_CTvsChagas_padj_log2
+miRNA_sel_hilowlog2_CTvsChagas <- c(rownames(res_CTvsChagas_padj_log2)[1:17], tail(rownames(res_CTvsChagas_padj_log2), 8))
+
+# Extrair os valores de contagem correspondentes do objeto dds_CTvsChagas
+miRNA_hilowlog2_counts_CTvsChagas <- counts(dds_CTvsChagas)[miRNA_sel_hilowlog2_CTvsChagas, ]
+miRNA_hilowlog2_counts_CTvsChagas[is.na(miRNA_hilowlog2_counts_CTvsChagas)] <- 0
+
+# Transformar os valores de contagem em z-score
+z_mat_miRNA_hilowlog2_counts_CTvsChagas <- t(apply(miRNA_hilowlog2_counts_CTvsChagas, 1, scale))
+
+# Obter os nomes das colunas da tabela de origem
+nomes_amostras <- colnames(miRNA_hilowlog2_counts_CTvsChagas)
+
+# Atribuir os nomes das colunas da tabela de origem à tabela de destino
+colnames(z_mat_miRNA_hilowlog2_counts_CTvsChagas) <- nomes_amostras
+
+# Transformar a tabela em data matrix
+z_mat_miRNA_hilowlog2_counts_CTvsChagas_mt <- as.matrix(z_mat_miRNA_hilowlog2_counts_CTvsChagas)
+
+# Reordenar as colunas da matriz z_mat conforme a ordem dos grupos
+HC_and_CD_subgroups$Sample <- rownames(HC_and_CD_subgroups)
+z_mat_ordenada <- z_mat_miRNA_hilowlog2_counts_CTvsChagas_mt[, match(HC_and_CD_subgroups$Sample, colnames(z_mat_miRNA_hilowlog2_counts_CTvsChagas_mt))]
+
+# Definir as cores para cada grupo em cada coluna da metadata
+cores_grupos <- list(
+    HC_vs_CD = c("non-ChD" = "blue", "ChD" = "black"),
+    HC_IND_CCC = c("HC" = "blue", "IND" = "green", "CCC" = "grey"),
+    Groups = c("HC" = "blue", "IND" = "green", "A" = "yellow", "B1/B2" = "orange", "C/D" = "red")
+)
+
+# Definir o caminho para salvar o gráfico
+output_heatmap_path <- "~/Documents/Fiocruz/projetos/miRNA_Chagas/Resultados/Heatmap/heatmap_zscore_miRNAs.png"
+
+# Criar um mapa de calor com as cores dos grupos
+heatmap <- pheatmap(z_mat_ordenada,
+                    cluster_rows = FALSE,
+                    cluster_cols = FALSE,
+                    color = colorRampPalette(c("red", "black", "green"))(100),
+                    scale = "column",
+                    xlab = "",
+                    ylab = "miRNAs",
+                    annotation_col = HC_and_CD_subgroups[, ordem_grupos, drop = FALSE],
+                    annotation_legend = TRUE,
+                    legend = TRUE,
+                    show_colnames = FALSE,
+                    annotation_colors = cores_grupos)
+
+# Salvar o heatmap
+png(output_heatmap_path, width = 1500, height = 800)
+print(heatmap)
+dev.off()
+
+# --------- Salvar matriz de z-score utilizada no heatmap ---------
+
+# Definir o caminho para o CSV dos dados do heatmap
+output_heatmap_raw_data_path <- "~/Documents/Fiocruz/artigos_pra_escrever/miRNA_Chagas/figuras_tabelas_manuscrito/Supporting_data_values/heatmap_zscore_miRNAs_raw_data.csv"
+write.csv(z_mat_ordenada, file = output_heatmap_raw_data_path, row.names = TRUE)
+
+# --------- Salvar a tabela de anotações das amostras ---------
+
+# Definir o caminho para o CSV das anotações de grupo
+output_heatmap_annotation_path <- "~/Documents/Fiocruz/artigos_pra_escrever/miRNA_Chagas/figuras_tabelas_manuscrito/Supporting_data_values/heatmap_annotations.csv"
+write.csv(HC_and_CD_subgroups, file = output_heatmap_annotation_path, row.names = TRUE)
+```
